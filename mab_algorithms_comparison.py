@@ -23,16 +23,21 @@ Output:
 - Charts saved to ./charts/
 """
 
-from __future__ import annotations
-
 import math
 import os
-import random
-from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Dict, List, Tuple, Type
+from typing import Dict, List, Type
 
 import matplotlib.pyplot as plt
+
+from strategies import (
+    ABTestingStrategy,
+    EpsilonGreedyStrategy,
+    OptimisticInitialValuesStrategy,
+    SoftmaxBoltzmannStrategy,
+    ThompsonSamplingStrategy,
+    UCB1Strategy,
+)
 
 
 @dataclass
@@ -53,193 +58,7 @@ class StrategyAggregateResult:
     mean_average_reward_curve: List[float]
 
 
-class BaseBanditStrategy(ABC):
-    def __init__(self, means: Dict[str, float], total_pulls: int, seed: int = 0):
-        self.means = means
-        self.total_pulls = total_pulls
-        self.arms = list(means.keys())
-        self.rng = random.Random(seed)
 
-        self.counts = {a: 0 for a in self.arms}
-        self.sum_rewards = {a: 0.0 for a in self.arms}
-        self.total_reward = 0.0
-        self.average_reward_curve: List[float] = []
-
-    def sample_reward(self, arm: str) -> float:
-        # Bernoulli reward to model stochastic returns around true mean.
-        return 1.0 if self.rng.random() < self.means[arm] else 0.0
-
-    def empirical_mean(self, arm: str) -> float:
-        n = self.counts[arm]
-        return self.sum_rewards[arm] / n if n > 0 else 0.0
-
-    @abstractmethod
-    def select_arm(self, t: int) -> str:
-        pass
-
-    def update(self, arm: str, reward: float) -> None:
-        self.counts[arm] += 1
-        self.sum_rewards[arm] += reward
-        self.total_reward += reward
-        step_count = sum(self.counts.values())
-        self.average_reward_curve.append(self.total_reward / step_count)
-
-    def run(self, display_name: str) -> StrategyRunResult:
-        for t in range(1, self.total_pulls + 1):
-            arm = self.select_arm(t)
-            reward = self.sample_reward(arm)
-            self.update(arm, reward)
-
-        return StrategyRunResult(
-            name=display_name,
-            total_reward=self.total_reward,
-            average_reward_curve=self.average_reward_curve,
-            pulls=self.counts.copy(),
-        )
-
-
-class ABTestingStrategy(BaseBanditStrategy):
-    def __init__(
-        self,
-        means: Dict[str, float],
-        total_pulls: int,
-        ab_test_pulls: int = 2000,
-        seed: int = 0,
-    ):
-        super().__init__(means, total_pulls, seed)
-        self.ab_test_pulls = ab_test_pulls
-        self.test_arms = ["A", "B"]
-        self.best_after_test: str | None = None
-
-    def select_arm(self, t: int) -> str:
-        if t <= self.ab_test_pulls:
-            # Equal split between A and B during test phase.
-            return self.test_arms[(t - 1) % 2]
-
-        if self.best_after_test is None:
-            mean_a = self.empirical_mean("A")
-            mean_b = self.empirical_mean("B")
-            self.best_after_test = "A" if mean_a >= mean_b else "B"
-
-        return self.best_after_test
-
-
-class OptimisticInitialValuesStrategy(BaseBanditStrategy):
-    def __init__(
-        self,
-        means: Dict[str, float],
-        total_pulls: int,
-        initial_value: float = 1.0,
-        seed: int = 0,
-    ):
-        super().__init__(means, total_pulls, seed)
-        self.q = {a: initial_value for a in self.arms}
-
-    def select_arm(self, t: int) -> str:
-        best = max(self.arms, key=lambda a: self.q[a])
-        return best
-
-    def update(self, arm: str, reward: float) -> None:
-        super().update(arm, reward)
-        n = self.counts[arm]
-        self.q[arm] += (reward - self.q[arm]) / n
-
-
-class EpsilonGreedyStrategy(BaseBanditStrategy):
-    def __init__(
-        self,
-        means: Dict[str, float],
-        total_pulls: int,
-        epsilon: float = 0.1,
-        seed: int = 0,
-    ):
-        super().__init__(means, total_pulls, seed)
-        self.epsilon = epsilon
-
-    def select_arm(self, t: int) -> str:
-        # Pull each arm once to initialize estimates.
-        if t <= len(self.arms):
-            return self.arms[t - 1]
-
-        if self.rng.random() < self.epsilon:
-            return self.rng.choice(self.arms)
-
-        return max(self.arms, key=lambda a: self.empirical_mean(a))
-
-
-class SoftmaxBoltzmannStrategy(BaseBanditStrategy):
-    def __init__(
-        self,
-        means: Dict[str, float],
-        total_pulls: int,
-        temperature: float = 0.1,
-        seed: int = 0,
-    ):
-        super().__init__(means, total_pulls, seed)
-        self.temperature = max(temperature, 1e-6)
-
-    def select_arm(self, t: int) -> str:
-        # Initialize by pulling each arm once.
-        if t <= len(self.arms):
-            return self.arms[t - 1]
-
-        logits = [self.empirical_mean(a) / self.temperature for a in self.arms]
-        max_logit = max(logits)
-        exps = [math.exp(x - max_logit) for x in logits]
-        z = sum(exps)
-        probs = [e / z for e in exps]
-
-        r = self.rng.random()
-        cdf = 0.0
-        for arm, p in zip(self.arms, probs):
-            cdf += p
-            if r <= cdf:
-                return arm
-
-        return self.arms[-1]
-
-
-class UCB1Strategy(BaseBanditStrategy):
-    def __init__(
-        self,
-        means: Dict[str, float],
-        total_pulls: int,
-        c: float = 2.0,
-        seed: int = 0,
-    ):
-        super().__init__(means, total_pulls, seed)
-        self.c = c
-
-    def select_arm(self, t: int) -> str:
-        # Ensure each arm is sampled at least once.
-        if t <= len(self.arms):
-            return self.arms[t - 1]
-
-        def ucb_value(a: str) -> float:
-            avg = self.empirical_mean(a)
-            bonus = self.c * math.sqrt(math.log(t) / self.counts[a])
-            return avg + bonus
-
-        return max(self.arms, key=ucb_value)
-
-
-class ThompsonSamplingStrategy(BaseBanditStrategy):
-    def __init__(self, means: Dict[str, float], total_pulls: int, seed: int = 0):
-        super().__init__(means, total_pulls, seed)
-        self.alpha = {a: 1.0 for a in self.arms}
-        self.beta = {a: 1.0 for a in self.arms}
-
-    def select_arm(self, t: int) -> str:
-        samples = {
-            a: self.rng.betavariate(self.alpha[a], self.beta[a]) for a in self.arms
-        }
-        return max(self.arms, key=lambda a: samples[a])
-
-    def update(self, arm: str, reward: float) -> None:
-        super().update(arm, reward)
-        # Bernoulli conjugate update.
-        self.alpha[arm] += reward
-        self.beta[arm] += 1.0 - reward
 
 
 class BanditComparison:
@@ -253,7 +72,7 @@ class BanditComparison:
     def evaluate_strategy(
         self,
         name: str,
-        strategy_cls: Type[BaseBanditStrategy],
+        strategy_cls: Type,
         **kwargs,
     ) -> StrategyAggregateResult:
         run_rewards: List[float] = []
@@ -263,10 +82,10 @@ class BanditComparison:
         for i in range(self.n_runs):
             seed = 20260325 + i
             strategy = strategy_cls(self.means, self.total_pulls, seed=seed, **kwargs)
-            result = strategy.run(display_name=name)
+            result = strategy.run()
 
-            run_rewards.append(result.total_reward)
-            run_pulls.append(result.pulls)
+            run_rewards.append(result["total_reward"])
+            run_pulls.append(result["pulls"])
             for t, value in enumerate(result.average_reward_curve):
                 avg_curve_sum[t] += value
 
@@ -289,7 +108,7 @@ class BanditComparison:
         )
 
     def run_all(self) -> List[StrategyAggregateResult]:
-        specs: List[Tuple[str, Type[BaseBanditStrategy], Dict]] = [
+        specs = [
             ("A/B Testing", ABTestingStrategy, {"ab_test_pulls": 2000}),
             (
                 "Optimistic Initial Values",

@@ -6,11 +6,11 @@
 
 ```
 .
-├── mab_ab_testing_analysis.py        # Tasks 1-5: A/B 測試分析 (獨立執行)
-├── mab_algorithms_comparison.py       # 無 UI 的策略比較 (生成靜態圖表)
-├── mab_regret_theory.py               # 數學基礎與 Regret 理論分析
-├── mab_master.py                      # 舊版：批量執行所有分析
-├── streamlit_app.py                   # ⭐ 新版：互動式 Streamlit 應用
+├── strategies.py                      # 核心：所有 6 種策略的共用實裝
+├── streamlit_app.py                   # ⭐ 主應用：互動式 Streamlit 儀表板
+├── mab_algorithms_comparison.py       # 命令列版本：對比分析 + 圖表輸出
+├── mab_ab_testing_analysis.py         # 詳細分析：A/B 測試 + 對比
+├── mab_regret_theory.py               # 教學模組：數學基礎 & Regret 理論
 ├── requirements.txt                    # Python 依賴
 └── README.md                          # 本檔案
 ```
@@ -200,3 +200,57 @@ python mab_regret_theory.py             # 數學推導
 - Streamlit 使用快取減少重計算
 - 策略類統一介面，易於擴展新策略
 - 圖表使用 matplotlib 且透過 Streamlit 即時顯示（無需存檔）
+
+## 🏗️ 模組架構說明
+
+### **strategies.py** - 核心策略模塊 ⭐
+
+代碼清理後的新核心模塊，集中所有 6 種策略的實裝，**消除重複代碼，提升可維護性**。
+
+**設計模式**（繼承層級）：
+
+```
+BaseBanditStrategy (抽象基類)
+├── ABTestingStrategy
+├── OptimisticInitialValuesStrategy
+├── EpsilonGreedyStrategy
+├── SoftmaxBoltzmannStrategy
+├── UCB1Strategy
+└── ThompsonSamplingStrategy
+```
+
+**快速使用**：
+
+```python
+from strategies import EpsilonGreedyStrategy
+
+strategy = EpsilonGreedyStrategy(
+  means={'A': 0.8, 'B': 0.7, 'C': 0.5},
+  total_pulls=10000,
+  epsilon=0.1
+)
+
+for t in range(10000):
+  arm = strategy.select_arm(t)
+  reward = strategy.sample_reward(arm)
+  strategy.update(arm, reward)
+
+# 結果
+assert len(strategy.average_reward_curve) == 10000
+print(f"平均回報: {strategy.total_reward / 10000:.3f}")
+print(f"各臂拉取次數: {strategy.counts}")
+```
+
+**為何採用這個設計？**
+
+| 優點 | 說明 |
+|------|------|
+| ✅ **代碼複用** | 避免在 streamlit_app.py 和 mab_algorithms_comparison.py 中重複定義策略 |
+| ✅ **易於擴展** | 加新策略只需在 strategies.py 中新增一個類別 |
+| ✅ **單一真理來源** | 策略邏輯只有一份副本，修改方便 |
+| ✅ **責任分離** | 策略邏輯 ← 與 → UI/命令列邏輯完全分開 |
+
+**版本控制歷程**：
+
+- 初版：策略定義分散在 streamlit_app.py、mab_algorithms_comparison.py 裡 → 代碼重複 ❌
+- 重構版：所有策略統一至 strategies.py → 代碼乾淨，易維護 ✅
