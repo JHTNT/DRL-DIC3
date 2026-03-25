@@ -232,42 +232,81 @@ def main():
         
         chart_col1, chart_col2 = st.columns(2)
         
-        # Chart 1: Mean Reward Comparison
+        # Chart 1: Performance-Stability Tradeoff (keep learning curve unchanged below)
         with chart_col1:
             fig, ax = plt.subplots(figsize=(8, 5))
             names = list(results_dict.keys())
             rewards = [results_dict[n]["mean_total_reward"] for n in names]
             stds = [results_dict[n]["std_total_reward"] for n in names]
-            
-            bars = ax.bar(range(len(names)), rewards, yerr=stds, capsize=5, color="steelblue")
-            ax.axhline(optimal_reward, color="red", linestyle="--", linewidth=2,
-                      label=f"Optimal = {optimal_reward:.0f}")
-            ax.set_xticks(range(len(names)))
-            ax.set_xticklabels(names, rotation=15, ha="right", fontsize=9)
+            efficiencies = [(r / optimal_reward) * 100 for r in rewards]
+
+            scatter = ax.scatter(
+                stds,
+                rewards,
+                c=efficiencies,
+                cmap="viridis",
+                s=140,
+                alpha=0.9,
+                edgecolors="black",
+                linewidths=0.6,
+            )
+            ax.axhline(
+                optimal_reward,
+                color="red",
+                linestyle="--",
+                linewidth=2,
+                label=f"Optimal = {optimal_reward:.0f}",
+            )
+
+            for i, name in enumerate(names):
+                ax.annotate(
+                    name,
+                    (stds[i], rewards[i]),
+                    xytext=(6, 5),
+                    textcoords="offset points",
+                    fontsize=8,
+                )
+
+            cbar = fig.colorbar(scatter, ax=ax)
+            cbar.set_label("Efficiency vs Optimal (%)")
+            ax.set_xlabel("Std Dev of Total Reward (lower is more stable)")
             ax.set_ylabel("Mean Total Reward")
-            ax.set_title("Strategy Performance: Mean Reward")
-            ax.legend()
-            
-            for b, v in zip(bars, rewards):
-                ax.text(b.get_x() + b.get_width() / 2, v + 50, f"{v:.0f}",
-                       ha="center", fontsize=9)
+            ax.set_title("Performance vs Stability")
+            ax.grid(True, alpha=0.25)
+            ax.legend(fontsize=9)
             
             st.pyplot(fig)
         
-        # Chart 2: Regret Comparison
+        # Chart 2: Efficiency Ranking
         with chart_col2:
             fig, ax = plt.subplots(figsize=(8, 5))
             regrets = [optimal_reward - results_dict[n]["mean_total_reward"] for n in names]
-            
-            bars = ax.bar(range(len(names)), regrets, color="coral")
-            ax.set_xticks(range(len(names)))
-            ax.set_xticklabels(names, rotation=15, ha="right", fontsize=9)
-            ax.set_ylabel("Regret vs Optimal")
-            ax.set_title("Strategy Performance: Regret")
-            
-            for b, v in zip(bars, regrets):
-                ax.text(b.get_x() + b.get_width() / 2, v + 10, f"{v:.0f}",
-                       ha="center", fontsize=9)
+
+            ranking = sorted(
+                zip(names, rewards, regrets), key=lambda x: x[1], reverse=True
+            )
+            rank_names = [x[0] for x in ranking]
+            rank_eff = [(x[1] / optimal_reward) * 100 for x in ranking]
+            rank_regret = [x[2] for x in ranking]
+            y = list(range(len(rank_names)))
+
+            bars = ax.barh(y, rank_eff, color="teal", alpha=0.85)
+            ax.set_yticks(y)
+            ax.set_yticklabels(rank_names, fontsize=9)
+            ax.invert_yaxis()
+            ax.set_xlim(0, 105)
+            ax.set_xlabel("Efficiency (%)")
+            ax.set_title("Efficiency Ranking (with Regret)")
+            ax.grid(axis="x", alpha=0.25)
+
+            for bar, eff, reg in zip(bars, rank_eff, rank_regret):
+                ax.text(
+                    min(eff + 0.8, 103.5),
+                    bar.get_y() + bar.get_height() / 2,
+                    f"{eff:.1f}% | R={reg:.0f}",
+                    va="center",
+                    fontsize=8,
+                )
             
             st.pyplot(fig)
         
@@ -286,25 +325,32 @@ def main():
         
         st.pyplot(fig)
         
-        # Chart 4: Arm Allocation
-        st.subheader("🎯 Action Allocation")
+        # Chart 4: Arm Allocation Mix (100% stacked)
+        st.subheader("🎯 Action Allocation Mix")
         fig, ax = plt.subplots(figsize=(12, 5))
         
         x = list(range(len(names)))
-        width = 0.25
         pulls_a = [results_dict[n]["mean_pulls"]["A"] for n in names]
         pulls_b = [results_dict[n]["mean_pulls"]["B"] for n in names]
         pulls_c = [results_dict[n]["mean_pulls"]["C"] for n in names]
-        
-        ax.bar([i - width for i in x], pulls_a, width=width, label="A", color="skyblue")
-        ax.bar(x, pulls_b, width=width, label="B", color="lightcoral")
-        ax.bar([i + width for i in x], pulls_c, width=width, label="C", color="lightgreen")
+
+        totals = [a + b + c for a, b, c in zip(pulls_a, pulls_b, pulls_c)]
+        share_a = [100 * a / t for a, t in zip(pulls_a, totals)]
+        share_b = [100 * b / t for b, t in zip(pulls_b, totals)]
+        share_c = [100 * c / t for c, t in zip(pulls_c, totals)]
+        bottom_c = [a + b for a, b in zip(share_a, share_b)]
+
+        ax.bar(x, share_a, label=f"A (mu={mu_a:.2f})", color="#4e79a7")
+        ax.bar(x, share_b, bottom=share_a, label=f"B (mu={mu_b:.2f})", color="#f28e2b")
+        ax.bar(x, share_c, bottom=bottom_c, label=f"C (mu={mu_c:.2f})", color="#59a14f")
         
         ax.set_xticks(x)
         ax.set_xticklabels(names, rotation=15, ha="right", fontsize=9)
-        ax.set_ylabel("Average Pull Count")
-        ax.set_title(f"How Each Strategy Allocates {total_pulls} Pulls Across Arms")
+        ax.set_ylabel("Allocation Share (%)")
+        ax.set_ylim(0, 100)
+        ax.set_title("Exploration/Exploitation Mix by Strategy")
         ax.legend()
+        ax.grid(axis="y", alpha=0.2)
         
         st.pyplot(fig)
         

@@ -37,10 +37,10 @@ streamlit run streamlit_app.py
   - 調整各策略的超參數（ε, 溫度, UCB-c 等）
 - **主頁面**：即時看到結果與圖表
   - 策略績效比較表
-  - 平均回報柱狀圖
-  - Regret 對比圖
+  - 績效-穩定性散點圖（Performance vs Stability）
+  - 效率排序圖（Efficiency Ranking）
   - 學習曲線（每步平均回報變化）
-  - 各臂拉取分配圖
+  - 各臂分配比例圖（100% 堆疊）
   - 排名詳細分析
 
 ### 3. 執行無 UI 版本（命令列）
@@ -55,10 +55,10 @@ python mab_algorithms_comparison.py
 
 - 策略績效表格
 - 生成 4 張 PNG 圖表到 `./charts/` 目錄：
-  - `strategy_mean_reward.png` - 平均回報
-  - `strategy_regret.png` - Regret 對比
+  - `strategy_stability_tradeoff.png` - 績效-穩定性權衡
+  - `strategy_efficiency.png` - 效率排序（含 Regret 標註）
   - `learning_curves.png` - 學習曲線
-  - `arm_allocation.png` - 臂拉取分配
+  - `arm_allocation_mix.png` - 臂分配比例（100% 堆疊）
 
 ### 4. 分析模組
 
@@ -149,10 +149,10 @@ python mab_regret_theory.py             # 數學推導
 
 ### 圖表
 
-1. **Mean Reward + Optimal**: 柱狀圖，紅虛線標示最優值
-2. **Regret**: 各策略的 Regret 大小
+1. **Performance vs Stability**: 散點圖（x=標準差、y=平均回報），顏色代表效率
+2. **Efficiency Ranking**: 水平排序圖，顯示效率 (%) 並附上 Regret
 3. **Learning Curves**: 折線圖顯示各策略在每一步的平均回報進展
-4. **Arm Allocation**: 堆疊柱狀圖，每個策略如何分配 N 次嘗試
+4. **Arm Allocation Mix**: 100% 堆疊柱狀圖，顯示探索/利用比例
 
 ## 💡 使用建議
 

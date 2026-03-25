@@ -86,7 +86,7 @@ class BanditComparison:
 
             run_rewards.append(result["total_reward"])
             run_pulls.append(result["pulls"])
-            for t, value in enumerate(result.average_reward_curve):
+            for t, value in enumerate(result["average_reward_curve"]):
                 avg_curve_sum[t] += value
 
         mean_reward = sum(run_rewards) / self.n_runs
@@ -164,35 +164,61 @@ class BanditComparison:
         stds = [r.std_total_reward for r in results]
         regrets = [r.regret_vs_optimal for r in results]
 
-        # Chart 1: Mean reward + optimal line.
+        # Chart 1: Performance vs stability tradeoff.
         plt.figure(figsize=(11, 6))
-        bars = plt.bar(range(len(names)), rewards, yerr=stds, capsize=5)
+        efficiencies = [(r / self.optimal_expected_reward) * 100 for r in rewards]
+        scatter = plt.scatter(
+            stds,
+            rewards,
+            c=efficiencies,
+            cmap="viridis",
+            s=160,
+            edgecolors="black",
+            linewidths=0.6,
+        )
         plt.axhline(
             self.optimal_expected_reward,
             color="red",
             linestyle="--",
             label=f"Optimal expected reward = {self.optimal_expected_reward:.0f}",
         )
-        plt.xticks(range(len(names)), names, rotation=20, ha="right")
+        for i, name in enumerate(names):
+            plt.annotate(name, (stds[i], rewards[i]), xytext=(6, 5), textcoords="offset points")
+        cbar = plt.colorbar(scatter)
+        cbar.set_label("Efficiency vs Optimal (%)")
+        plt.xlabel("Std Dev of Total Reward (lower is more stable)")
         plt.ylabel("Mean Total Reward")
-        plt.title("Bandit Strategy Comparison: Mean Reward")
+        plt.title("Bandit Strategy Comparison: Performance vs Stability")
         plt.legend()
-        for b, v in zip(bars, rewards):
-            plt.text(b.get_x() + b.get_width() / 2, v + 15, f"{v:.0f}", ha="center")
+        plt.grid(alpha=0.25)
         plt.tight_layout()
-        plt.savefig("charts/strategy_mean_reward.png", dpi=150)
+        plt.savefig("charts/strategy_stability_tradeoff.png", dpi=150)
         plt.close()
 
-        # Chart 2: Regret bar chart.
+        # Chart 2: Efficiency ranking (with regret labels).
         plt.figure(figsize=(11, 6))
-        bars = plt.bar(range(len(names)), regrets)
-        plt.xticks(range(len(names)), names, rotation=20, ha="right")
-        plt.ylabel("Regret vs Optimal")
-        plt.title("Bandit Strategy Comparison: Regret")
-        for b, v in zip(bars, regrets):
-            plt.text(b.get_x() + b.get_width() / 2, v + 5, f"{v:.0f}", ha="center")
+        ranking = sorted(zip(names, rewards, regrets), key=lambda x: x[1], reverse=True)
+        rank_names = [x[0] for x in ranking]
+        rank_eff = [(x[1] / self.optimal_expected_reward) * 100 for x in ranking]
+        rank_regret = [x[2] for x in ranking]
+        y = list(range(len(rank_names)))
+        bars = plt.barh(y, rank_eff, color="teal", alpha=0.85)
+        plt.yticks(y, rank_names)
+        plt.gca().invert_yaxis()
+        plt.xlim(0, 105)
+        plt.xlabel("Efficiency (%)")
+        plt.title("Bandit Strategy Comparison: Efficiency Ranking")
+        plt.grid(axis="x", alpha=0.25)
+        for bar, eff, reg in zip(bars, rank_eff, rank_regret):
+            plt.text(
+                min(eff + 0.7, 103.5),
+                bar.get_y() + bar.get_height() / 2,
+                f"{eff:.1f}% | R={reg:.0f}",
+                va="center",
+                fontsize=8,
+            )
         plt.tight_layout()
-        plt.savefig("charts/strategy_regret.png", dpi=150)
+        plt.savefig("charts/strategy_efficiency.png", dpi=150)
         plt.close()
 
         # Chart 3: Mean average reward over time.
@@ -207,30 +233,37 @@ class BanditComparison:
         plt.savefig("charts/learning_curves.png", dpi=150)
         plt.close()
 
-        # Chart 4: Average pulls per arm for each strategy.
+        # Chart 4: Arm allocation mix as 100% stacked bar.
         plt.figure(figsize=(11, 6))
         x = list(range(len(names)))
-        width = 0.25
         pulls_a = [r.mean_pulls["A"] for r in results]
         pulls_b = [r.mean_pulls["B"] for r in results]
         pulls_c = [r.mean_pulls["C"] for r in results]
 
-        plt.bar([i - width for i in x], pulls_a, width=width, label="A")
-        plt.bar(x, pulls_b, width=width, label="B")
-        plt.bar([i + width for i in x], pulls_c, width=width, label="C")
+        totals = [a + b + c for a, b, c in zip(pulls_a, pulls_b, pulls_c)]
+        share_a = [100 * a / t for a, t in zip(pulls_a, totals)]
+        share_b = [100 * b / t for b, t in zip(pulls_b, totals)]
+        share_c = [100 * c / t for c, t in zip(pulls_c, totals)]
+        bottom_c = [a + b for a, b in zip(share_a, share_b)]
+
+        plt.bar(x, share_a, label=f"A (mu={self.means['A']:.2f})")
+        plt.bar(x, share_b, bottom=share_a, label=f"B (mu={self.means['B']:.2f})")
+        plt.bar(x, share_c, bottom=bottom_c, label=f"C (mu={self.means['C']:.2f})")
         plt.xticks(x, names, rotation=20, ha="right")
-        plt.ylabel("Average Pull Count")
-        plt.title("Action Allocation by Strategy")
+        plt.ylim(0, 100)
+        plt.ylabel("Allocation Share (%)")
+        plt.title("Action Allocation Mix by Strategy")
         plt.legend()
+        plt.grid(axis="y", alpha=0.2)
         plt.tight_layout()
-        plt.savefig("charts/arm_allocation.png", dpi=150)
+        plt.savefig("charts/arm_allocation_mix.png", dpi=150)
         plt.close()
 
         print("\nCharts saved to ./charts/")
-        print("- charts/strategy_mean_reward.png")
-        print("- charts/strategy_regret.png")
+        print("- charts/strategy_stability_tradeoff.png")
+        print("- charts/strategy_efficiency.png")
         print("- charts/learning_curves.png")
-        print("- charts/arm_allocation.png")
+        print("- charts/arm_allocation_mix.png")
 
 
 def main() -> None:
